@@ -1,0 +1,6 @@
+name: pedra_papel_tesoura
+description: Jogo de console desenvolvido a partir da apostila de introdução a Dart.
+version: 1.0.0
+environment:
+  sdk: ^3.0.0
+
