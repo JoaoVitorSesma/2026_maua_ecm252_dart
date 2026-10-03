@@ -114,4 +114,15 @@ verificação, execute os mesmos comandos acima na pasta `terrario_api`.
 `dart format .` e `dart analyze` concluídos antes do commit, com
 `No issues found!`.
 
-Execução encerrada ao final do capítulo 4, aguardando aprovação para 5 e 6.
+## 5. O modelo de maturidade de Richardson
+
+Capítulo conceitual concluído: nível 0 (HTTP como túnel), nível 1 (recursos),
+nível 2 (verbos e códigos de status) e nível 3 (HATEOAS), incluindo os formatos
+HAL, JSON:API e Siren.
+
+Os códigos 5.1 a 5.13 ilustram requisições, respostas e representações; não
+instruem a criar arquivos ou implementar rotas nesta etapa. O servidor do
+capítulo 4 foi mantido, conforme a sequência da apostila.
+
+`dart format .` e `dart analyze` concluídos antes do commit, com
+`No issues found!`.
