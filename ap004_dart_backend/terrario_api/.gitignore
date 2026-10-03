@@ -1,0 +1,11 @@
+# Dependências e artefatos do Dart
+.dart_tool/
+build/
+pubspec.lock
+
+# Configuração local com segredos
+.env
+
+# Editores
+.idea/
+.vscode/

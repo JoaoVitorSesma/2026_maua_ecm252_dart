@@ -1,0 +1,14 @@
+{
+  "roots": [
+    "pedra_papel_tesoura"
+  ],
+  "packages": [
+    {
+      "name": "pedra_papel_tesoura",
+      "version": "1.0.0",
+      "dependencies": [],
+      "devDependencies": []
+    }
+  ],
+  "configVersion": 1
+}

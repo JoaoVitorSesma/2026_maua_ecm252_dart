@@ -1,0 +1,14 @@
+{
+  "configVersion": 2,
+  "packages": [
+    {
+      "name": "pedra_papel_tesoura",
+      "rootUri": "../",
+      "packageUri": "lib/",
+      "languageVersion": "3.0"
+    }
+  ],
+  "generator": "pub",
+  "generatorVersion": "3.13.1",
+  "pubCache": "file:///C:/Users/jv070/AppData/Local/Pub/Cache"
+}
