@@ -77,3 +77,41 @@ Bad state: Variável de ambiente obrigatória ausente: DB_HOST
 A linha foi restaurada e o comando voltou a produzir a configuração e a
 porta esperadas. `dart format .` e `dart analyze` concluídos antes do commit,
 com `No issues found!`.
+
+## 4. O primeiro servidor HTTP
+
+O teste provisório de `bin/server.dart` foi substituído pelo código 4.1.
+O servidor resolve a configuração antes de abrir a porta e escuta em
+`InternetAddress.anyIPv4`, conforme a apostila.
+
+Executado `dart run bin/server.dart`:
+
+```text
+Servidor ouvindo em http://localhost:8080
+AppConfig(appEnv: development, serverPort: 8080, db: terrario_app@127.0.0.1:3307/terrarios, pool: 10)
+```
+
+Em outro terminal, executado `curl.exe -i http://localhost:8080/qualquer/coisa`.
+No PowerShell, `curl.exe` chama diretamente o curl usado pela apostila.
+A resposta incluiu:
+
+```text
+HTTP/1.1 200 OK
+content-length: 23
+x-frame-options: SAMEORIGIN
+x-content-type-options: nosniff
+
+API de Terrarios no ar
+```
+
+A apostila mostra `content-length: 24`, mas o corpo do código 4.1,
+`API de Terrarios no ar\n`, tem 23 bytes. O código foi mantido conforme o
+bloco, e o servidor retornou o tamanho correto. O cabeçalho `date` corresponde
+ao momento da requisição.
+
+O servidor foi encerrado com Ctrl+C após a conferência. Para repetir a
+verificação, execute os mesmos comandos acima na pasta `terrario_api`.
+`dart format .` e `dart analyze` concluídos antes do commit, com
+`No issues found!`.
+
+Execução encerrada ao final do capítulo 4, aguardando aprovação para 5 e 6.
