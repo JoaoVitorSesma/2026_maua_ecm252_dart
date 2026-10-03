@@ -143,4 +143,14 @@ O capítulo não pede novos comandos de execução ou respostas HTTP.
 `dart format .` terminou sem alterações e `dart analyze` retornou
 `No issues found!` antes do commit.
 
-Execução encerrada ao final do capítulo 6, aguardando aprovação para 7 e 8.
+## 7. Contêineres e Docker
+
+Capítulo conceitual concluído: servidores físicos, máquinas virtuais e
+contêineres; namespaces, cgroups e sistema de arquivos em camadas; imagem,
+contêiner, registro, volume, rede, publicação de portas e orquestração.
+
+O capítulo não instrui a criar arquivos ou executar comandos. A criação
+do banco em contêiner começa no capítulo 8.
+
+`dart format .` e `dart analyze` concluídos antes do commit, com
+`No issues found!`.
