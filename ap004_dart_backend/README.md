@@ -126,3 +126,21 @@ capítulo 4 foi mantido, conforme a sequência da apostila.
 
 `dart format .` e `dart analyze` concluídos antes do commit, com
 `No issues found!`.
+
+## 6. Arquitetura em camadas
+
+Criado `lib/src/models/terrario.dart` com o enum `Bioma` e a entidade imutável
+`Terrario`, conforme o código 6.1. Os métodos `copyWith`, `toJson` e
+`_somenteData` do código 6.2 foram acrescentados no mesmo arquivo, sem duplicar
+as linhas de contexto. O modelo não importa HTTP ou SQL, conforme a
+verificação indicada na apostila.
+
+Criado `lib/src/core/erros.dart`, conforme o código 6.3, com a classe base
+`sealed` `ErroApp` e as exceções `NaoEncontrado`, `ErroValidacao`, `Conflito`
+e `RequisicaoInvalida`.
+
+O capítulo não pede novos comandos de execução ou respostas HTTP.
+`dart format .` terminou sem alterações e `dart analyze` retornou
+`No issues found!` antes do commit.
+
+Execução encerrada ao final do capítulo 6, aguardando aprovação para 7 e 8.
