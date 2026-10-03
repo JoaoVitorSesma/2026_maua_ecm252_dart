@@ -49,4 +49,31 @@ O exemplo gerado por `dart create` usava `print`, incompatível com a regra
 Verificação final: `dart analyze` retornou `No issues found!`, e
 `dart format .` terminou sem alterações pendentes de formatação.
 
-Execução encerrada ao final do capítulo 2, aguardando aprovação para 3 e 4.
+## 3. Configuração por variáveis de ambiente
+
+Criados `.env`, `.env.example`, `lib/src/config/env.dart` e
+`lib/src/config/app_config.dart`, conforme os códigos 3.1 a 3.5.
+O ponto de entrada gerado foi substituído por `bin/server.dart`, com o teste
+provisório do código 3.6.
+
+O `.gitignore` foi atualizado conforme o código 3.3. O `pubspec.lock`,
+versionado no capítulo 2, foi retirado do controle de versão e mantido
+localmente para seguir essa orientação. O `.env` permanece apenas local.
+
+Executado `dart run bin/server.dart`:
+
+```text
+AppConfig(appEnv: development, serverPort: 8080, db: terrario_app@127.0.0.1:3307/terrarios, pool: 10)
+Porta lida: 8080
+```
+
+Ao comentar `DB_HOST` no `.env`, a execução falhou como previsto:
+
+```text
+Unhandled exception:
+Bad state: Variável de ambiente obrigatória ausente: DB_HOST
+```
+
+A linha foi restaurada e o comando voltou a produzir a configuração e a
+porta esperadas. `dart format .` e `dart analyze` concluídos antes do commit,
+com `No issues found!`.
