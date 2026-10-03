@@ -154,3 +154,49 @@ do banco em contêiner começa no capítulo 8.
 
 `dart format .` e `dart analyze` concluídos antes do commit, com
 `No issues found!`.
+
+## 8. O banco MySQL em um contêiner
+
+Criada a pasta `docker/mysql/init/` e o arquivo `01-schema.sql`, conforme o
+código 8.1, antes da primeira inicialização do banco. O script cria a tabela
+com os índices e restrições indicados e insere os quatro terrários da apostila.
+
+O Docker Desktop estava parado e foi iniciado para executar esta etapa.
+O contêiner foi criado pelo comando do item 8.3, adaptando apenas a sintaxe
+do caminho de montagem para o PowerShell no Windows:
+
+```powershell
+docker run --name mysql-terrarios -e MYSQL_ROOT_PASSWORD=root-dev-2026 -e MYSQL_DATABASE=terrarios -e MYSQL_USER=terrario_app -e MYSQL_PASSWORD=terrario-dev-2026 -v "C:/Users/jv070/Documents/ecm252/dart/ap004_dart_backend/terrario_api/docker/mysql/init:/docker-entrypoint-initdb.d:ro" -p 3307:3306 -d mysql:8.4
+docker logs -f mysql-terrarios
+```
+
+As credenciais utilizadas são as de exemplo da apostila e coincidem com o
+`.env` local. A imagem `mysql:8.4` baixada executa MySQL 8.4.11.
+Os logs confirmaram `Initializing database files`, a execução de
+`/docker-entrypoint-initdb.d/01-schema.sql` e `ready for connections` na
+porta 3306. O acompanhamento dos logs foi encerrado com Ctrl+C.
+
+Executada a conferência do item 8.4 pelo cliente interativo:
+
+```text
+docker exec -it mysql-terrarios mysql -u terrario_app -p terrarios
+mysql> SELECT id, apelido, bioma, umidade_alvo FROM terrarios;
++----+---------------------+-----------+--------------+
+| id | apelido             | bioma     | umidade_alvo |
++----+---------------------+-----------+--------------+
+|  1 | Vale das Samambaias | tropical  |           85 |
+|  2 | Duna de Bolso       | desertico |           20 |
+|  3 | Bosque de Musgo     | musgo     |           92 |
+|  4 | Clareira Fria       | temperado |           60 |
++----+---------------------+-----------+--------------+
+4 rows in set (0.01 sec)
+mysql> exit
+```
+
+O cliente foi encerrado e o contêiner `mysql-terrarios` permanece rodando,
+com a porta local 3307 publicada, conforme a orientação da apostila.
+`dart format .` terminou sem alterações e `dart analyze` retornou
+`No issues found!` antes do commit.
+
+Execução concluída até o item 8.4, na página 32 da apostila. O capítulo 9
+não foi iniciado.
