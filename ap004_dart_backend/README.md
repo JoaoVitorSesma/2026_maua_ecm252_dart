@@ -256,3 +256,13 @@ Acrescentados os dois testes do código 16.1. `dart test` passou com os quatro
 casos da apostila e o teste inicial `calculate`, totalizando cinco testes.
 Esse resultado não comprova a compilação da camada web: os testes originais
 não importam o controlador que contém a chave excedente.
+
+## 17. Exercícios
+
+Os dez exercícios foram resolvidos em um patch separado, preservando a
+transcrição dos capítulos anteriores. Consulte [exercicios/README.md](exercicios/README.md)
+para a correspondência entre cada exercício, sua implementação e os comandos
+de aplicação. A versão com os exercícios foi verificada em uma cópia isolada.
+
+O [relatório de implementação](RELATORIO_IMPLEMENTACAO.md) reúne o estado por
+capítulo, os erros reproduzidos, as correções propostas e os limites da verificação.
