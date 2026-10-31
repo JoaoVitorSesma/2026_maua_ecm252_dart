@@ -243,3 +243,9 @@ O contrato principal documenta somente a listagem, como nos códigos 13.1 e 13.2
 Criados o `Dockerfile` com dois estágios e o `.dockerignore`, conforme os
 códigos 14.1 e 14.2. A execução da imagem depende da correção de compilação
 do capítulo 11 e de um Docker Engine disponível.
+
+## 15. Docker Compose
+
+Criados `compose.yaml` e `scripts/up.sh`, conforme os códigos 15.1 a 15.3.
+A configuração do Compose e a sintaxe Bash foram verificadas. O script deve
+ser executado pelo Git Bash ou WSL no Windows, como orientado na apostila.
