@@ -1,0 +1,10 @@
+# Nada aqui precisa entrar no contexto de build, e deixar de fora
+# acelera a cópia e evita vazar segredos para dentro da imagem.
+.dart_tool/
+build/
+.git/
+.github/
+.idea/
+.vscode/
+.env
+*.md

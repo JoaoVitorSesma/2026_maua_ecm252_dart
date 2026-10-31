@@ -237,3 +237,9 @@ indicados pelo material, preservando filtros nos links de paginação.
 Criados `openapi.yaml`, `web/docs/index.html` e o controlador de documentação.
 As rotas `/docs/` e `/docs/openapi.yaml` foram montadas na API.
 O contrato principal documenta somente a listagem, como nos códigos 13.1 e 13.2.
+
+## 14. Imagem Docker
+
+Criados o `Dockerfile` com dois estágios e o `.dockerignore`, conforme os
+códigos 14.1 e 14.2. A execução da imagem depende da correção de compilação
+do capítulo 11 e de um Docker Engine disponível.
