@@ -7,6 +7,7 @@ import '../core/erros.dart';
 import '../models/terrario.dart';
 import '../repositories/terrario_repository.dart';
 import '../services/terrario_service.dart';
+import '../web/links.dart';
 
 class TerrarioController {
   TerrarioController(this._service);
@@ -115,41 +116,50 @@ Router get router {
   return router;
 }
 
-Future<Response> _listar(Request requisicao) async {
-  final q = requisicao.url.queryParameters;
-
-  final filtro = FiltroTerrario(
+  Future<Response> _listar(Request requisicao) async {
+    final q = requisicao.url.queryParameters;
+    final filtro = FiltroTerrario(
     bioma: Bioma.porNome(q['bioma']),
     umidadeMinima: int.tryParse(q['umidadeMinima'] ?? ''),
     pagina: int.tryParse(q['pagina'] ?? '') ?? 1,
     tamanhoPagina: int.tryParse(q['tamanhoPagina'] ?? '') ?? 20,
   );
+    final pagina = await _service.listar(filtro);
 
-  final pagina = await _service.listar(filtro);
+    // Preserva os filtros ativos nos links de paginação, para que
+    // avançar de página não perca o critério de busca.
+    final filtrosAtuais = <String, String>{
+      if (q['bioma'] != null) 'bioma': q['bioma']!,
+      if (q['umidadeMinima'] != null) 'umidadeMinima': q['umidadeMinima']!,
+    };
 
-  return _json(200, {
-    'itens': pagina.itens.map((t) => t.toJson()).toList(),
-    'pagina': pagina.pagina,
-    'tamanhoPagina': pagina.tamanhoPagina,
-    'total': pagina.total,
-    'totalPaginas': pagina.totalPaginas,
-  });
-}
+    return _json(200, {
+      'itens': pagina.itens
+          .map((t) => {...t.toJson(), '_links': linksDoTerrario(t)})
+          .toList(),
+      'pagina': pagina.pagina,
+      'tamanhoPagina': pagina.tamanhoPagina,
+      'total': pagina.total,
+      'totalPaginas': pagina.totalPaginas,
+      '_links': linksDaColecao(pagina, filtrosAtuais),
+    });
+  }
 
-Future<Response> _buscar(Request requisicao, String id) async {
-  final terrario = await _service.buscarPorId(_idValido(id));
-  return _json(200, terrario.toJson());
-}
+  Future<Response> _buscar(Request requisicao, String id) async {
+    final terrario = await _service.buscarPorId(_idValido(id));
+    return _json(200, {
+      ...terrario.toJson(),
+      '_links': linksDoTerrario(terrario),
+    });
+  }
 
   Future<Response> _criar(Request requisicao) async {
     final corpo = await _lerJson(requisicao);
     final criado = await _service.criar(_montarTerrario(corpo));
 
-    // 201 acompanhado de Location é o contrato esperado para criação:
-    // o cliente descobre a URI do novo recurso sem precisar montá-la.
     return _json(
       201,
-      criado.toJson(),
+      {...criado.toJson(), '_links': linksDoTerrario(criado)},
       cabecalhos: {'location': '/api/v1/terrarios/${criado.id}'},
     );
   }

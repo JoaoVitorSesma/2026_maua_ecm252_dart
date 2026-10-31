@@ -225,3 +225,9 @@ montagem da API e servidor com tratamento de sinais.
 O código 11.10 contém uma chave excedente no PDF. Ela foi mantida na
 transcrição principal, conforme o pedido de registrar erros para corrigir
 ao final. Isso impede a análise e a compilação da API até a correção.
+
+## 12. HATEOAS
+
+Criado `lib/src/web/links.dart` e aplicados os acréscimos do código 12.2
+ao controlador. A listagem, a consulta e a criação devolvem os links
+indicados pelo material, preservando filtros nos links de paginação.
