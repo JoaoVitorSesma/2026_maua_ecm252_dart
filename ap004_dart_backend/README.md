@@ -198,5 +198,20 @@ com a porta local 3307 publicada, conforme a orientação da apostila.
 `dart format .` terminou sem alterações e `dart analyze` retornou
 `No issues found!` antes do commit.
 
-Execução concluída até o item 8.4, na página 32 da apostila. O capítulo 9
-não foi iniciado.
+Esse era o ponto de parada ao registrar o capítulo 8. O capítulo 9 foi
+concluído posteriormente, e a continuação está registrada abaixo.
+
+## 9. A camada de persistência
+
+Implementação já existente: pool de conexões, espera pelo banco, contrato
+do repositório, filtros, paginação e CRUD em MySQL. O antigo `bin/server.dart`
+correspondia à conferência provisória do código 9.8.
+
+## 10. A camada de serviço
+
+Criado `lib/src/services/terrario_service.dart` com os códigos 10.1 e 10.2,
+incluindo o limite de 100 itens por página da apostila. Os códigos 10.3 e 10.4
+foram transcritos para `test/terrario_service_test.dart`; os dois testes passaram.
+
+Executada a experiência do item 10.1.1: alterar temporariamente o limite de
+umidade para 1000 fez o teste de validação falhar. O limite de 100 foi restaurado.
