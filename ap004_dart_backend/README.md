@@ -215,3 +215,13 @@ foram transcritos para `test/terrario_service_test.dart`; os dois testes passara
 
 Executada a experiência do item 10.1.1: alterar temporariamente o limite de
 umidade para 1000 fez o teste de validação falhar. O limite de 100 foi restaurado.
+
+## 11. A camada web
+
+Transcritos os códigos 11.3 a 11.13: respostas problem+json, log, CORS,
+tratamento de erros, controlador de terrários, verificações de saúde,
+montagem da API e servidor com tratamento de sinais.
+
+O código 11.10 contém uma chave excedente no PDF. Ela foi mantida na
+transcrição principal, conforme o pedido de registrar erros para corrigir
+ao final. Isso impede a análise e a compilação da API até a correção.
