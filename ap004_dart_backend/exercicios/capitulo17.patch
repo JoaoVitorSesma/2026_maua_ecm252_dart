@@ -1,0 +1,1679 @@
+diff --git a/ap004_dart_backend/terrario_api/compose.yaml b/ap004_dart_backend/terrario_api/compose.yaml
+--- a/ap004_dart_backend/terrario_api/compose.yaml
++++ b/ap004_dart_backend/terrario_api/compose.yaml
+@@ -49,6 +49,19 @@
+       # Liga este contêiner à rede privada declarada no fim do arquivo.
+       - terrario-net
+ 
++  # Administração do banco na mesma rede, sem montar o volume de dados.
++  adminer:
++    image: adminer:4.8.1
++    environment:
++      ADMINER_DEFAULT_SERVER: db
++    ports:
++      - "127.0.0.1:8081:8080"
++    networks:
++      - terrario-net
++    depends_on:
++      db:
++        condition: service_healthy
++
+   # ---------------- API ----------------
+   # Filho de "services", no mesmo nível de "db".
+   api:
+diff --git a/ap004_dart_backend/terrario_api/docker/mysql/init/02-exercicios.sql b/ap004_dart_backend/terrario_api/docker/mysql/init/02-exercicios.sql
+new file mode 100644
+--- /dev/null
++++ b/ap004_dart_backend/terrario_api/docker/mysql/init/02-exercicios.sql
+@@ -0,0 +1,23 @@
++-- Executado após o schema original em um volume novo.
++-- Em um banco já existente, aplique este arquivo uma única vez, sem apagar dados.
++ALTER TABLE terrarios ADD COLUMN observacoes VARCHAR(500) NULL;
++
++CREATE TABLE especies (
++  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
++  nome VARCHAR(120) NOT NULL,
++  PRIMARY KEY (id),
++  UNIQUE KEY uq_especie_nome (nome)
++);
++
++CREATE TABLE terrario_especies (
++  terrario_id INT UNSIGNED NOT NULL,
++  especie_id BIGINT UNSIGNED NOT NULL,
++  PRIMARY KEY (terrario_id, especie_id),
++  CONSTRAINT fk_te_terrario FOREIGN KEY (terrario_id)
++    REFERENCES terrarios (id) ON DELETE CASCADE,
++  CONSTRAINT fk_te_especie FOREIGN KEY (especie_id)
++    REFERENCES especies (id) ON DELETE CASCADE
++);
++
++INSERT INTO especies (nome) VALUES ('Samambaia'), ('Musgo');
++INSERT INTO terrario_especies (terrario_id, especie_id) VALUES (1, 1), (3, 2);
+diff --git a/ap004_dart_backend/terrario_api/lib/src/api.dart b/ap004_dart_backend/terrario_api/lib/src/api.dart
+--- a/ap004_dart_backend/terrario_api/lib/src/api.dart
++++ b/ap004_dart_backend/terrario_api/lib/src/api.dart
+@@ -1,3 +1,5 @@
++import 'dart:convert';
++
+ import 'package:mysql_dart/mysql_dart.dart';
+ import 'package:shelf/shelf.dart';
+ import 'package:shelf_router/shelf_router.dart';
+@@ -7,23 +9,41 @@
+ import 'controllers/docs_controller.dart';
+ import 'controllers/terrario_controller.dart';
+ import 'repositories/mysql_terrario_repository.dart';
++import 'repositories/terrario_repository.dart';
+ import 'services/terrario_service.dart';
+ import 'web/middlewares.dart';
+ import 'web/problem.dart';
+ 
+ /// Constrói o handler completo da aplicação: rotas mais pilha de middlewares.
+-Handler construirApi(AppConfig config, MySQLConnectionPool pool) {
++Handler construirApi(
++  AppConfig config,
++  MySQLConnectionPool pool, {
++  TerrarioRepository? repository,
++}) {
+   // As dependências são criadas de fora para dentro e injetadas por
+   // construtor. Trocar MySqlTerrarioRepository por uma implementação em
+   // memória é uma alteração de uma linha.
+-  final repository = MySqlTerrarioRepository(pool);
+-  final service = TerrarioService(repository);
++  final service = TerrarioService(repository ?? MySqlTerrarioRepository(pool));
+   final terrarios = TerrarioController(service);
+   final health = HealthController(pool);
+ 
+   final docs = DocsController();
+ 
+   final raiz = Router();
++
++  raiz.get(
++    '/api/v1',
++    (Request _) => Response.ok(
++      jsonEncode({
++        '_links': {
++          'terrarios': {'href': '/api/v1/terrarios', 'method': 'GET'},
++          'docs': {'href': '/docs/', 'method': 'GET'},
++          'health': {'href': '/health/ready', 'method': 'GET'},
++        },
++      }),
++      headers: {'content-type': 'application/json; charset=utf-8'},
++    ),
++  );
+ 
+   raiz.mount('/api/v1/terrarios', terrarios.router.call);
+   raiz.mount('/health', health.router.call);
+@@ -50,5 +70,6 @@
+       .addMiddleware(registrarAcessos())
+       .addMiddleware(liberarCors())
+       .addMiddleware(tratarErros(detalharFalhas: !config.producao))
++      .addMiddleware(limitarTaxa())
+       .addHandler(raiz.call);
+ }
+diff --git a/ap004_dart_backend/terrario_api/lib/src/controllers/terrario_controller.dart b/ap004_dart_backend/terrario_api/lib/src/controllers/terrario_controller.dart
+--- a/ap004_dart_backend/terrario_api/lib/src/controllers/terrario_controller.dart
++++ b/ap004_dart_backend/terrario_api/lib/src/controllers/terrario_controller.dart
+@@ -69,6 +69,10 @@
+   /// no serviço; aqui trata-se apenas da forma dos dados.
+   Terrario _montarTerrario(Map<String, dynamic> corpo) {
+     final erros = <String, String>{};
++    final observacoes = corpo['observacoes'];
++    if (observacoes != null && observacoes is! String) {
++      erros['observacoes'] = 'Deve ser texto ou null.';
++    }
+ 
+     final apelido = corpo['apelido'];
+     if (apelido is! String) {
+@@ -107,6 +111,7 @@
+       umidadeAlvo: umidade as int,
+       volumeLitros: (volume as num).toDouble(),
+       dataMontagem: data!,
++      observacoes: observacoes as String?,
+     );
+   }
+ 
+@@ -119,6 +124,8 @@
+     router.get('/<id>', _buscar);
+     router.post('/', _criar);
+     router.put('/<id>', _atualizar);
++    router.patch('/<id>', _alterarParcialmente);
++    router.get('/<id>/especies', _listarEspecies);
+     router.delete('/<id>', _remover);
+ 
+     return router;
+@@ -131,6 +138,7 @@
+       umidadeMinima: int.tryParse(q['umidadeMinima'] ?? ''),
+       pagina: int.tryParse(q['pagina'] ?? '') ?? 1,
+       tamanhoPagina: int.tryParse(q['tamanhoPagina'] ?? '') ?? 20,
++      ordenarPor: q['ordenarPor'] ?? 'apelido',
+     );
+     final pagina = await _service.listar(filtro);
+ 
+@@ -139,6 +147,7 @@
+     final filtrosAtuais = <String, String>{
+       if (q['bioma'] != null) 'bioma': q['bioma']!,
+       if (q['umidadeMinima'] != null) 'umidadeMinima': q['umidadeMinima']!,
++      if (q['ordenarPor'] != null) 'ordenarPor': q['ordenarPor']!,
+     };
+ 
+     return _json(200, {
+@@ -178,7 +187,10 @@
+       _idValido(id),
+       _montarTerrario(corpo),
+     );
+-    return _json(200, atualizado.toJson());
++    return _json(200, {
++      ...atualizado.toJson(),
++      '_links': linksDoTerrario(atualizado),
++    });
+   }
+ 
+   Future<Response> _remover(Request requisicao, String id) async {
+@@ -187,4 +199,27 @@
+     // sucesso" seria redundante com o próprio código de status.
+     return Response(204);
+   }
++
++  /// PUT recebe a representação completa; PATCH altera os campos enviados.
++  /// Esta versão de PATCH sobrescreve valores e é idempotente. PATCH, em geral,
++  /// pode executar ações como incrementar um número ou acrescentar à lista;
++  /// repetir essas ações muda o resultado, portanto não é sempre idempotente.
++  Future<Response> _alterarParcialmente(Request requisicao, String id) async {
++    final identificador = _idValido(id);
++    final corpo = await _lerJson(requisicao);
++    final atual = await _service.buscarPorId(identificador);
++    final atualizado = await _service.atualizar(
++      identificador,
++      _montarTerrario({...atual.toJson(), ...corpo}),
++    );
++    return _json(200, {
++      ...atualizado.toJson(),
++      '_links': linksDoTerrario(atualizado),
++    });
++  }
++
++  Future<Response> _listarEspecies(Request requisicao, String id) async {
++    final especies = await _service.listarEspecies(_idValido(id));
++    return _json(200, {'itens': especies.map((e) => e.toJson()).toList()});
++  }
+ }
+diff --git a/ap004_dart_backend/terrario_api/lib/src/models/especie.dart b/ap004_dart_backend/terrario_api/lib/src/models/especie.dart
+new file mode 100644
+--- /dev/null
++++ b/ap004_dart_backend/terrario_api/lib/src/models/especie.dart
+@@ -0,0 +1,8 @@
++class Especie {
++  const Especie({required this.id, required this.nome});
++
++  final int id;
++  final String nome;
++
++  Map<String, dynamic> toJson() => {'id': id, 'nome': nome};
++}
+diff --git a/ap004_dart_backend/terrario_api/lib/src/models/terrario.dart b/ap004_dart_backend/terrario_api/lib/src/models/terrario.dart
+--- a/ap004_dart_backend/terrario_api/lib/src/models/terrario.dart
++++ b/ap004_dart_backend/terrario_api/lib/src/models/terrario.dart
+@@ -1,3 +1,5 @@
++const Object _naoInformado = Object();
++
+ /// Biomas aceitos pelo catálogo. O enum garante, em tempo de compilação,
+ /// que nenhum ponto do código invente um valor fora da lista.
+ enum Bioma {
+@@ -30,6 +32,7 @@
+     required this.dataMontagem,
+     this.criadoEm,
+     this.atualizadoEm,
++    this.observacoes,
+   });
+ 
+   /// Nulo enquanto o terrário ainda não foi persistido.
+@@ -41,6 +44,7 @@
+   final DateTime dataMontagem;
+   final DateTime? criadoEm;
+   final DateTime? atualizadoEm;
++  final String? observacoes;
+ 
+   Terrario copyWith({
+     int? id,
+@@ -49,6 +53,7 @@
+     int? umidadeAlvo,
+     double? volumeLitros,
+     DateTime? dataMontagem,
++    Object? observacoes = _naoInformado,
+   }) {
+     return Terrario(
+       id: id ?? this.id,
+@@ -59,6 +64,9 @@
+       dataMontagem: dataMontagem ?? this.dataMontagem,
+       criadoEm: criadoEm,
+       atualizadoEm: atualizadoEm,
++      observacoes: identical(observacoes, _naoInformado)
++          ? this.observacoes
++          : observacoes as String?,
+     );
+   }
+ 
+@@ -73,6 +81,7 @@
+     'dataMontagem': _somenteData(dataMontagem),
+     'criadoEm': criadoEm?.toIso8601String(),
+     'atualizadoEm': atualizadoEm?.toIso8601String(),
++    'observacoes': observacoes,
+   };
+ 
+   static String _somenteData(DateTime d) =>
+diff --git a/ap004_dart_backend/terrario_api/lib/src/repositories/mysql_terrario_repository.dart b/ap004_dart_backend/terrario_api/lib/src/repositories/mysql_terrario_repository.dart
+--- a/ap004_dart_backend/terrario_api/lib/src/repositories/mysql_terrario_repository.dart
++++ b/ap004_dart_backend/terrario_api/lib/src/repositories/mysql_terrario_repository.dart
+@@ -1,6 +1,9 @@
+ import 'package:mysql_dart/mysql_dart.dart';
+-
++import 'package:mysql_dart/exception.dart';
++
++import '../core/erros.dart';
+ import '../models/terrario.dart';
++import '../models/especie.dart';
+ import 'terrario_repository.dart';
+ 
+ class MySqlTerrarioRepository implements TerrarioRepository {
+@@ -12,7 +15,7 @@
+   /// conjunto de campos não mudam quando alguém alterar a tabela.
+   static const String _colunas =
+       'id, apelido, bioma, umidade_alvo, volume_litros, '
+-      'data_montagem, criado_em, atualizado_em';
++      'data_montagem, criado_em, atualizado_em, observacoes';
+ 
+   /// Converte uma linha do resultado em uma entidade.
+   ///
+@@ -34,6 +37,7 @@
+       dataMontagem: DateTime.parse(dados['data_montagem']!),
+       criadoEm: DateTime.tryParse(dados['criado_em'] ?? ''),
+       atualizadoEm: DateTime.tryParse(dados['atualizado_em'] ?? ''),
++      observacoes: dados['observacoes'],
+     );
+   }
+ 
+@@ -62,6 +66,7 @@
+ 
+   @override
+   Future<Pagina<Terrario>> listar(FiltroTerrario filtro) async {
++    final ordem = filtro.ordemSql;
+     // Condições e parâmetros crescem juntos, mantendo a correspondência.
+     final condicoes = <String>[];
+     final parametros = <String, dynamic>{};
+@@ -90,7 +95,7 @@
+     // parâmetros, nunca concatenação de texto.
+     final resultado = await _pool.execute(
+       'SELECT $_colunas FROM terrarios $where '
+-      'ORDER BY apelido ASC LIMIT :limite OFFSET :deslocamento',
++      'ORDER BY $ordem LIMIT :limite OFFSET :deslocamento',
+       {
+         ...parametros,
+         'limite': filtro.tamanhoPagina,
+@@ -107,31 +112,32 @@
+   }
+ 
+   @override
+-  Future<Terrario> inserir(Terrario terrario) async {
++  Future<Terrario> inserir(Terrario terrario) => _escrever(() async {
+     final resultado = await _pool.execute(
+       'INSERT INTO terrarios '
+-      '(apelido, bioma, umidade_alvo, volume_litros, data_montagem) '
+-      'VALUES (:apelido, :bioma, :umidade, :volume, :data)',
++      '(apelido, bioma, umidade_alvo, volume_litros, data_montagem, observacoes) '
++      'VALUES (:apelido, :bioma, :umidade, :volume, :data, :observacoes)',
+       {
+         'apelido': terrario.apelido,
+         'bioma': terrario.bioma.name,
+         'umidade': terrario.umidadeAlvo,
+         'volume': terrario.volumeLitros,
+         'data': _formatarData(terrario.dataMontagem),
++        'observacoes': terrario.observacoes,
+       },
+     );
+ 
+     final novoId = resultado.lastInsertID.toInt();
+     // Recarrega para trazer criado_em e atualizado_em gerados pelo banco.
+     return (await buscarPorId(novoId))!;
+-  }
+-
+-  @override
+-  Future<Terrario?> atualizar(int id, Terrario terrario) async {
++  });
++
++  @override
++  Future<Terrario?> atualizar(int id, Terrario terrario) => _escrever(() async {
+     await _pool.execute(
+       'UPDATE terrarios SET '
+       'apelido = :apelido, bioma = :bioma, umidade_alvo = :umidade, '
+-      'volume_litros = :volume, data_montagem = :data '
++      'volume_litros = :volume, data_montagem = :data, observacoes = :observacoes '
+       'WHERE id = :id',
+       {
+         'id': id,
+@@ -140,6 +146,7 @@
+         'umidade': terrario.umidadeAlvo,
+         'volume': terrario.volumeLitros,
+         'data': _formatarData(terrario.dataMontagem),
++        'observacoes': terrario.observacoes,
+       },
+     );
+ 
+@@ -149,6 +156,35 @@
+     // existir, ele é devolvido; se não, o retorno é nulo e a camada de serviço
+     // transforma isso em 404.
+     return buscarPorId(id);
++  });
++
++  /// A consulta prévia do serviço pode passar em duas requisições simultâneas.
++  /// A restrição UNIQUE do banco decide qual escrita vence; 1062 vira 409.
++  Future<T> _escrever<T>(Future<T> Function() executar) async {
++    try {
++      return await executar();
++    } on MySQLServerException catch (erro) {
++      if (erro.errorCode == 1062) {
++        throw const Conflito('Ja existe um terrario com este apelido.');
++      }
++      rethrow;
++    }
++  }
++
++  @override
++  Future<List<Especie>> listarEspecies(int terrarioId) async {
++    final resultado = await _pool.execute(
++      'SELECT e.id, e.nome FROM especies e '
++      'INNER JOIN terrario_especies te ON te.especie_id = e.id '
++      'WHERE te.terrario_id = :id ORDER BY e.nome ASC',
++      {'id': terrarioId},
++    );
++    return resultado.rows
++        .map((linha) {
++          final dados = linha.assoc().cast<String, String?>();
++          return Especie(id: int.parse(dados['id']!), nome: dados['nome']!);
++        })
++        .toList(growable: false);
+   }
+ 
+   @override
+diff --git a/ap004_dart_backend/terrario_api/lib/src/repositories/terrario_repository.dart b/ap004_dart_backend/terrario_api/lib/src/repositories/terrario_repository.dart
+--- a/ap004_dart_backend/terrario_api/lib/src/repositories/terrario_repository.dart
++++ b/ap004_dart_backend/terrario_api/lib/src/repositories/terrario_repository.dart
+@@ -1,4 +1,5 @@
+ import '../models/terrario.dart';
++import '../models/especie.dart';
+ 
+ /// Critérios de busca aceitos pela listagem.
+ class FiltroTerrario {
+@@ -7,12 +8,33 @@
+     this.umidadeMinima,
+     this.pagina = 1,
+     this.tamanhoPagina = 20,
++    this.ordenarPor = 'apelido',
+   });
+ 
+   final Bioma? bioma;
+   final int? umidadeMinima;
+   final int pagina;
+   final int tamanhoPagina;
++  final String ordenarPor;
++
++  /// Identificadores SQL não podem ser substituídos por parâmetros de valores.
++  /// A lista permite apenas colunas conhecidas, nunca texto livre do cliente.
++  String get ordemSql {
++    final partes = ordenarPor.split(':');
++    const colunas = {
++      'apelido': 'apelido',
++      'umidadeAlvo': 'umidade_alvo',
++      'dataMontagem': 'data_montagem',
++    };
++    final coluna = colunas[partes.first];
++    final direcao = partes.length == 1 ? 'asc' : partes[1];
++    if (coluna == null ||
++        partes.length > 2 ||
++        !const ['asc', 'desc'].contains(direcao)) {
++      throw ArgumentError.value(ordenarPor, 'ordenarPor');
++    }
++    return '$coluna ${direcao.toUpperCase()}, id ASC';
++  }
+ 
+   /// Quantos registros pular na consulta SQL.
+   int get deslocamento => (pagina - 1) * tamanhoPagina;
+@@ -46,4 +68,5 @@
+   Future<Terrario> inserir(Terrario terrario);
+   Future<Terrario?> atualizar(int id, Terrario terrario);
+   Future<bool> remover(int id);
++  Future<List<Especie>> listarEspecies(int terrarioId);
+ }
+diff --git a/ap004_dart_backend/terrario_api/lib/src/services/terrario_service.dart b/ap004_dart_backend/terrario_api/lib/src/services/terrario_service.dart
+--- a/ap004_dart_backend/terrario_api/lib/src/services/terrario_service.dart
++++ b/ap004_dart_backend/terrario_api/lib/src/services/terrario_service.dart
+@@ -1,5 +1,6 @@
+ import '../core/erros.dart';
+ import '../models/terrario.dart';
++import '../models/especie.dart';
+ import '../repositories/terrario_repository.dart';
+ 
+ class TerrarioService {
+@@ -10,12 +11,21 @@
+   static const int _tamanhoPaginaMaximo = 100;
+ 
+   Future<Pagina<Terrario>> listar(FiltroTerrario filtro) {
++    try {
++      filtro.ordemSql;
++    } on ArgumentError {
++      throw const ErroValidacao('Ordenacao invalida.', {
++        'ordenarPor':
++            'Use apelido, umidadeAlvo ou dataMontagem, com :asc ou :desc opcional.',
++      });
++    }
+     // Um cliente que peça dez mil itens de uma vez derruba o servidor.
+     // O teto é aplicado aqui, e não no controlador, porque é uma decisão
+     // de negócio e não de protocolo.
+     final seguro = FiltroTerrario(
+       bioma: filtro.bioma,
+       umidadeMinima: filtro.umidadeMinima,
++      ordenarPor: filtro.ordenarPor,
+       pagina: filtro.pagina < 1 ? 1 : filtro.pagina,
+       // clamp é declarado em num e devolve num, por isso o toInt().
+       tamanhoPagina: filtro.tamanhoPagina
+@@ -38,6 +48,9 @@
+   /// o formulário em várias rodadas.
+   void _validar(Terrario t) {
+     final erros = <String, String>{};
++    if (t.observacoes != null && t.observacoes!.length > 500) {
++      erros['observacoes'] = 'Deve ter no maximo 500 caracteres.';
++    }
+ 
+     final apelido = t.apelido.trim();
+     if (apelido.length < 3 || apelido.length > 80) {
+@@ -95,4 +108,9 @@
+       throw NaoEncontrado('Nao existe terrario com id $id.');
+     }
+   }
++
++  Future<List<Especie>> listarEspecies(int id) async {
++    await buscarPorId(id);
++    return _repository.listarEspecies(id);
++  }
+ }
+diff --git a/ap004_dart_backend/terrario_api/lib/src/web/links.dart b/ap004_dart_backend/terrario_api/lib/src/web/links.dart
+--- a/ap004_dart_backend/terrario_api/lib/src/web/links.dart
++++ b/ap004_dart_backend/terrario_api/lib/src/web/links.dart
+@@ -21,6 +21,7 @@
+   final links = <String, Map<String, String>>{
+     'self': _link(self, 'GET'),
+     'collection': _link('$baseApi/terrarios', 'GET'),
++    'especies': _link('$self/especies', 'GET'),
+   };
+ 
+   final editavel = t.dataMontagem.isAfter(
+diff --git a/ap004_dart_backend/terrario_api/lib/src/web/middlewares.dart b/ap004_dart_backend/terrario_api/lib/src/web/middlewares.dart
+--- a/ap004_dart_backend/terrario_api/lib/src/web/middlewares.dart
++++ b/ap004_dart_backend/terrario_api/lib/src/web/middlewares.dart
+@@ -1,4 +1,6 @@
+ import 'dart:io';
++import 'dart:convert';
++import 'dart:math';
+ 
+ import 'package:shelf/shelf.dart';
+ 
+@@ -14,14 +16,29 @@
+   return (Handler proximo) {
+     return (Request requisicao) async {
+       final inicio = DateTime.now();
+-      final resposta = await proximo(requisicao);
++      final recebido = requisicao.headers['x-request-id'];
++      final aleatorio = Random.secure();
++      final identificador = recebido == null || recebido.trim().isEmpty
++          ? List.generate(
++              16,
++              (_) => aleatorio.nextInt(256).toRadixString(16).padLeft(2, '0'),
++            ).join()
++          : recebido;
++      final resposta = await proximo(
++        requisicao.change(headers: {'x-request-id': identificador}),
++      );
+       final duracao = DateTime.now().difference(inicio).inMilliseconds;
+ 
+       stdout.writeln(
+-        '${requisicao.method} /${requisicao.url.path} '
+-        '-> ${resposta.statusCode} (${duracao}ms)',
++        jsonEncode({
++          'metodo': requisicao.method,
++          'rota': '/${requisicao.url.path}',
++          'status': resposta.statusCode,
++          'duracaoMs': duracao,
++          'requestId': identificador,
++        }),
+       );
+-      return resposta;
++      return resposta.change(headers: {'x-request-id': identificador});
+     };
+   };
+ }
+@@ -30,8 +47,9 @@
+ Middleware liberarCors({String origem = '*'}) {
+   final cabecalhos = {
+     'access-control-allow-origin': origem,
+-    'access-control-allow-methods': 'GET, POST, PUT, DELETE, OPTIONS',
+-    'access-control-allow-headers': 'Content-Type, Authorization',
++    'access-control-allow-methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
++    'access-control-allow-headers': 'Content-Type, Authorization, X-Request-Id',
++    'access-control-expose-headers': 'Location, X-Request-Id, Retry-After',
+     'access-control-max-age': '86400',
+   };
+ 
+@@ -106,3 +124,38 @@
+     ),
+   };
+ }
++
++class _Janela {
++  _Janela(this.inicio);
++
++  final DateTime inicio;
++  int quantidade = 0;
++}
++
++/// Janela fixa de um minuto por endereço real da conexão HTTP.
++/// X-Forwarded-For não é confiado sem um proxy explicitamente configurado.
++Middleware limitarTaxa() {
++  final janelas = <String, _Janela>{};
++  return (Handler proximo) => (Request requisicao) async {
++    final agora = DateTime.now().toUtc();
++    janelas.removeWhere(
++      (_, janela) =>
++          agora.difference(janela.inicio) >= const Duration(minutes: 1),
++    );
++    final conexao =
++        requisicao.context['shelf.io.connection_info'] as HttpConnectionInfo?;
++    final endereco = conexao?.remoteAddress.address ?? 'desconhecido';
++    final janela = janelas.putIfAbsent(endereco, () => _Janela(agora));
++    if (janela.quantidade >= 60) {
++      final restante = 60000 - agora.difference(janela.inicio).inMilliseconds;
++      return problema(
++        status: 429,
++        tipo: 'limite-de-requisicoes',
++        titulo: 'Muitas requisicoes',
++        detalhe: 'Limite de 60 requisicoes por minuto por endereco.',
++      ).change(headers: {'retry-after': '${(restante / 1000).ceil()}'});
++    }
++    janela.quantidade++;
++    return proximo(requisicao);
++  };
++}
+diff --git a/ap004_dart_backend/terrario_api/openapi.yaml b/ap004_dart_backend/terrario_api/openapi.yaml
+--- a/ap004_dart_backend/terrario_api/openapi.yaml
++++ b/ap004_dart_backend/terrario_api/openapi.yaml
+@@ -1,44 +1,75 @@
+ openapi: 3.1.0
+-
+ info:
+   title: API de Terrários
+   description: Catálogo de terrários com filtros, paginação e hipermídia.
+   version: 1.0.0
+-
+ servers:
+-  - url: /api/v1
+-    description: Servidor atual
+-
+-# Blocos reutilizáveis. Definir uma vez aqui e referenciar com $ref evita
+-# repetir a mesma estrutura em cada operação — e garante que corrigir um
+-# campo corrija todos os lugares onde ele aparece.
++- url: /api/v1
++  description: Servidor atual
+ components:
+   schemas:
+     Bioma:
+       type: string
+-      enum: [tropical, desertico, temperado, musgo]
+-
++      enum:
++      - tropical
++      - desertico
++      - temperado
++      - musgo
+     Link:
+       type: object
+       properties:
+-        href: { type: string, example: /api/v1/terrarios/7 }
+-        method: { type: string, example: GET }
+-
++        href:
++          type: string
++          example: /api/v1/terrarios/7
++        method:
++          type: string
++          example: GET
+     Terrario:
+       type: object
+       properties:
+-        id: { type: integer, example: 7 }
+-        apelido: { type: string, example: Vale das Samambaias }
++        id:
++          type: integer
++          example: 7
++          readOnly: true
++        apelido:
++          type: string
++          example: Vale das Samambaias
+         bioma:
+           $ref: '#/components/schemas/Bioma'
+-        umidadeAlvo: { type: integer, minimum: 0, maximum: 100, example: 85 }
+-        volumeLitros: { type: number, format: double, example: 12.5 }
+-        dataMontagem: { type: string, format: date, example: '2026-03-14' }
++        umidadeAlvo:
++          type: integer
++          minimum: 0
++          maximum: 100
++          example: 85
++        volumeLitros:
++          type: number
++          format: double
++          example: 12.5
++        dataMontagem:
++          type: string
++          format: date
++          example: '2026-03-14'
+         _links:
+           type: object
+           additionalProperties:
+             $ref: '#/components/schemas/Link'
+-
++        observacoes:
++          type:
++          - string
++          - 'null'
++          maxLength: 500
++        criadoEm:
++          type:
++          - string
++          - 'null'
++          format: date-time
++          readOnly: true
++        atualizadoEm:
++          type:
++          - string
++          - 'null'
++          format: date-time
++          readOnly: true
+     PaginaDeTerrarios:
+       type: object
+       properties:
+@@ -46,38 +77,125 @@
+           type: array
+           items:
+             $ref: '#/components/schemas/Terrario'
+-        pagina: { type: integer, example: 1 }
+-        tamanhoPagina: { type: integer, example: 20 }
+-        total: { type: integer, example: 4 }
+-        totalPaginas: { type: integer, example: 1 }
++        pagina:
++          type: integer
++          example: 1
++        tamanhoPagina:
++          type: integer
++          example: 20
++        total:
++          type: integer
++          example: 4
++        totalPaginas:
++          type: integer
++          example: 1
+         _links:
+           type: object
+           additionalProperties:
+             $ref: '#/components/schemas/Link'
+-
+-# Chave de primeiro nível, no mesmo recuo de "openapi", "info" e "components".
++    TerrarioEntrada:
++      type: object
++      required:
++      - apelido
++      - bioma
++      - umidadeAlvo
++      - volumeLitros
++      - dataMontagem
++      properties: &id001
++        apelido:
++          type: string
++          minLength: 3
++          maxLength: 80
++        bioma:
++          $ref: '#/components/schemas/Bioma'
++        umidadeAlvo:
++          type: integer
++          minimum: 0
++          maximum: 100
++        volumeLitros:
++          type: number
++          exclusiveMinimum: 0
++        dataMontagem:
++          type: string
++          format: date
++        observacoes:
++          type:
++          - string
++          - 'null'
++          maxLength: 500
++    TerrarioParcial:
++      type: object
++      properties: *id001
++    Problema:
++      type: object
++      required:
++      - type
++      - title
++      - status
++      - detail
++      properties:
++        type:
++          type: string
++        title:
++          type: string
++        status:
++          type: integer
++        detail:
++          type: string
++        errors:
++          type: object
++          additionalProperties:
++            type: string
++    Especie:
++      type: object
++      properties:
++        id:
++          type: integer
++        nome:
++          type: string
+ paths:
+-  # Filho de paths: o caminho, relativo ao "url" declarado em servers.
+   /terrarios:
+-    # Filho do caminho: o verbo HTTP.
+     get:
+       summary: Lista terrários com filtros e paginação
+-      # Cada parâmetro de consulta vira uma caixa preenchível na interface
+-      # do Swagger, com os limites aplicados na própria tela.
+       parameters:
+-        - name: bioma
+-          in: query
+-          schema:
+-            $ref: '#/components/schemas/Bioma'
+-        - name: umidadeMinima
+-          in: query
+-          schema: { type: integer, minimum: 0, maximum: 100 }
+-        - name: pagina
+-          in: query
+-          schema: { type: integer, minimum: 1, default: 1 }
+-        - name: tamanhoPagina
+-          in: query
+-          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
++      - name: bioma
++        in: query
++        schema:
++          $ref: '#/components/schemas/Bioma'
++      - name: umidadeMinima
++        in: query
++        schema:
++          type: integer
++          minimum: 0
++          maximum: 100
++      - name: pagina
++        in: query
++        schema:
++          type: integer
++          minimum: 1
++          default: 1
++      - name: tamanhoPagina
++        in: query
++        schema:
++          type: integer
++          minimum: 1
++          maximum: 100
++          default: 20
++      - name: ordenarPor
++        in: query
++        schema:
++          type: string
++          default: apelido
++          enum:
++          - apelido
++          - apelido:asc
++          - apelido:desc
++          - umidadeAlvo
++          - umidadeAlvo:asc
++          - umidadeAlvo:desc
++          - dataMontagem
++          - dataMontagem:asc
++          - dataMontagem:desc
+       responses:
+         '200':
+           description: Página de resultados
+@@ -85,3 +203,503 @@
+             application/json:
+               schema:
+                 $ref: '#/components/schemas/PaginaDeTerrarios'
++        '422':
++          description: Dados invalidos
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++        '429':
++          description: Limite de requisicoes excedido
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++          headers:
++            Retry-After:
++              description: Segundos ate uma nova tentativa
++              schema:
++                type: integer
++                minimum: 1
++        '500':
++          description: Falha interna
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++    post:
++      summary: Cria um terrario
++      requestBody:
++        required: true
++        content:
++          application/json:
++            schema:
++              $ref: '#/components/schemas/TerrarioEntrada'
++      responses:
++        '201':
++          description: Terrario criado
++          content:
++            application/json:
++              schema:
++                $ref: '#/components/schemas/Terrario'
++          headers:
++            Location:
++              schema:
++                type: string
++              description: URI do terrario criado
++        '400':
++          description: Requisicao malformada
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++        '409':
++          description: Apelido duplicado, inclusive em escritas simultaneas
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++        '422':
++          description: Dados invalidos
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++        '429':
++          description: Limite de requisicoes excedido
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++          headers:
++            Retry-After:
++              description: Segundos ate uma nova tentativa
++              schema:
++                type: integer
++                minimum: 1
++        '500':
++          description: Falha interna
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++  /terrarios/{id}:
++    parameters:
++    - &id002
++      name: id
++      in: path
++      required: true
++      schema:
++        type: integer
++        minimum: 1
++    get:
++      summary: Consulta um terrario
++      responses:
++        '200':
++          description: Terrario encontrado
++          content:
++            application/json:
++              schema:
++                $ref: '#/components/schemas/Terrario'
++        '400':
++          description: Requisicao malformada
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++        '404':
++          description: Recurso inexistente
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++        '429':
++          description: Limite de requisicoes excedido
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++          headers:
++            Retry-After:
++              description: Segundos ate uma nova tentativa
++              schema:
++                type: integer
++                minimum: 1
++        '500':
++          description: Falha interna
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++    delete:
++      summary: Remove um terrario
++      responses:
++        '204':
++          description: Terrario removido, sem corpo
++        '400':
++          description: Requisicao malformada
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++        '404':
++          description: Recurso inexistente
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++        '429':
++          description: Limite de requisicoes excedido
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++          headers:
++            Retry-After:
++              description: Segundos ate uma nova tentativa
++              schema:
++                type: integer
++                minimum: 1
++        '500':
++          description: Falha interna
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++    put:
++      summary: Substitui os dados do terrario
++      requestBody:
++        required: true
++        content:
++          application/json:
++            schema:
++              $ref: '#/components/schemas/TerrarioEntrada'
++      responses:
++        '200':
++          description: Terrario atualizado
++          content:
++            application/json:
++              schema:
++                $ref: '#/components/schemas/Terrario'
++        '400':
++          description: Requisicao malformada
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++        '404':
++          description: Recurso inexistente
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++        '409':
++          description: Apelido duplicado, inclusive em escritas simultaneas
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++        '422':
++          description: Dados invalidos
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++        '429':
++          description: Limite de requisicoes excedido
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++          headers:
++            Retry-After:
++              description: Segundos ate uma nova tentativa
++              schema:
++                type: integer
++                minimum: 1
++        '500':
++          description: Falha interna
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++    patch:
++      summary: Altera apenas os campos enviados
++      requestBody:
++        required: true
++        content:
++          application/json:
++            schema:
++              $ref: '#/components/schemas/TerrarioParcial'
++      responses:
++        '200':
++          description: Terrario atualizado
++          content:
++            application/json:
++              schema:
++                $ref: '#/components/schemas/Terrario'
++        '400':
++          description: Requisicao malformada
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++        '404':
++          description: Recurso inexistente
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++        '409':
++          description: Apelido duplicado, inclusive em escritas simultaneas
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++        '422':
++          description: Dados invalidos
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++        '429':
++          description: Limite de requisicoes excedido
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++          headers:
++            Retry-After:
++              description: Segundos ate uma nova tentativa
++              schema:
++                type: integer
++                minimum: 1
++        '500':
++          description: Falha interna
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++  /terrarios/{id}/especies:
++    parameters:
++    - *id002
++    get:
++      summary: Lista especies associadas ao terrario
++      responses:
++        '200':
++          description: Especies associadas
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  itens:
++                    type: array
++                    items:
++                      $ref: '#/components/schemas/Especie'
++        '400':
++          description: Requisicao malformada
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++        '404':
++          description: Recurso inexistente
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++        '429':
++          description: Limite de requisicoes excedido
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++          headers:
++            Retry-After:
++              description: Segundos ate uma nova tentativa
++              schema:
++                type: integer
++                minimum: 1
++        '500':
++          description: Falha interna
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++  /api/v1:
++    get:
++      servers:
++      - url: /
++      summary: Entrada de hipermidia da API
++      responses:
++        '200':
++          description: Relacoes de navegacao
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  _links:
++                    type: object
++                    additionalProperties:
++                      $ref: '#/components/schemas/Link'
++        '429':
++          description: Limite de requisicoes excedido
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++          headers:
++            Retry-After:
++              description: Segundos ate uma nova tentativa
++              schema:
++                type: integer
++                minimum: 1
++        '500':
++          description: Falha interna
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++  /health/live:
++    get:
++      servers:
++      - url: /
++      summary: Verificacao de live
++      responses:
++        '200':
++          description: Servico saudavel
++          content:
++            application/json:
++              schema: &id003
++                type: object
++                properties:
++                  status:
++                    type: string
++                  banco:
++                    type: string
++        '429':
++          description: Limite de requisicoes excedido
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++          headers:
++            Retry-After:
++              description: Segundos ate uma nova tentativa
++              schema:
++                type: integer
++                minimum: 1
++        '500':
++          description: Falha interna
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++  /health/ready:
++    get:
++      servers:
++      - url: /
++      summary: Verificacao de ready
++      responses:
++        '200':
++          description: Servico saudavel
++          content:
++            application/json:
++              schema: *id003
++        '429':
++          description: Limite de requisicoes excedido
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++          headers:
++            Retry-After:
++              description: Segundos ate uma nova tentativa
++              schema:
++                type: integer
++                minimum: 1
++        '500':
++          description: Falha interna
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++        '503':
++          description: Banco indisponivel
++          content:
++            application/json:
++              schema: *id003
++  /docs/:
++    get:
++      servers:
++      - url: /
++      summary: Documentacao da API
++      responses:
++        '200':
++          description: Documento
++          content:
++            text/html:
++              schema:
++                type: string
++        '404':
++          description: Arquivo ausente
++          content:
++            text/plain:
++              schema:
++                type: string
++        '429':
++          description: Limite de requisicoes excedido
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++          headers:
++            Retry-After:
++              description: Segundos ate uma nova tentativa
++              schema:
++                type: integer
++                minimum: 1
++        '500':
++          description: Falha interna
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++  /docs/openapi.yaml:
++    get:
++      servers:
++      - url: /
++      summary: Documentacao da API
++      responses:
++        '200':
++          description: Documento
++          content:
++            application/yaml:
++              schema:
++                type: string
++        '404':
++          description: Arquivo ausente
++          content:
++            text/plain:
++              schema:
++                type: string
++        '429':
++          description: Limite de requisicoes excedido
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
++          headers:
++            Retry-After:
++              description: Segundos ate uma nova tentativa
++              schema:
++                type: integer
++                minimum: 1
++        '500':
++          description: Falha interna
++          content:
++            application/problem+json:
++              schema:
++                $ref: '#/components/schemas/Problema'
+diff --git a/ap004_dart_backend/terrario_api/test/api_integracao_test.dart b/ap004_dart_backend/terrario_api/test/api_integracao_test.dart
+new file mode 100644
+--- /dev/null
++++ b/ap004_dart_backend/terrario_api/test/api_integracao_test.dart
+@@ -0,0 +1,189 @@
++import 'dart:convert';
++import 'dart:io';
++
++import 'package:shelf/shelf_io.dart' as shelf_io;
++import 'package:terrario_api/src/api.dart';
++import 'package:terrario_api/src/config/app_config.dart';
++import 'package:terrario_api/src/config/database.dart';
++import 'package:test/test.dart';
++
++import 'terrario_service_test.dart' show RepositorioFake;
++
++const config = AppConfig(
++  appEnv: 'production',
++  serverPort: 8080,
++  logLevel: 'info',
++  dbHost: '127.0.0.1',
++  dbPort: 3307,
++  dbName: 'terrarios',
++  dbUser: 'teste',
++  dbPassword: 'teste',
++  dbPoolSize: 1,
++);
++
++void main() {
++  late HttpServer servidor;
++  late HttpClient cliente;
++  late Future<void> Function() fecharPool;
++
++  setUp(() async {
++    final pool = criarPool(config);
++    fecharPool = pool.close;
++    servidor = await shelf_io.serve(
++      construirApi(config, pool, repository: RepositorioFake()),
++      InternetAddress.loopbackIPv4,
++      0,
++    );
++    cliente = HttpClient();
++  });
++
++  tearDown(() async {
++    cliente.close(force: true);
++    await servidor.close(force: true);
++    await fecharPool();
++  });
++
++  Future<({int status, HttpHeaders headers, String body})> enviar(
++    String metodo,
++    String caminho, {
++    Object? corpo,
++    String? requestId,
++  }) async {
++    final requisicao = await cliente.openUrl(
++      metodo,
++      Uri.parse('http://127.0.0.1:${servidor.port}$caminho'),
++    );
++    if (requestId != null) requisicao.headers.set('X-Request-Id', requestId);
++    if (corpo != null) {
++      requisicao.headers.contentType = ContentType.json;
++      requisicao.write(jsonEncode(corpo));
++    }
++    final resposta = await requisicao.close();
++    return (
++      status: resposta.statusCode,
++      headers: resposta.headers,
++      body: await utf8.decoder.bind(resposta).join(),
++    );
++  }
++
++  Map<String, dynamic> dados({String apelido = 'Terrario de teste'}) => {
++    'apelido': apelido,
++    'bioma': 'musgo',
++    'umidadeAlvo': 80,
++    'volumeLitros': 5.0,
++    'dataMontagem': '2020-01-01',
++    'observacoes': 'Manter na sombra.',
++  };
++
++  test('cria, consulta, altera parcialmente e remove por HTTP', () async {
++    final criacao = await enviar('POST', '/api/v1/terrarios', corpo: dados());
++    expect(criacao.status, 201);
++    expect(criacao.headers.value('location'), '/api/v1/terrarios/1');
++    final criado = jsonDecode(criacao.body) as Map<String, dynamic>;
++    expect(criado['observacoes'], 'Manter na sombra.');
++    expect(criado['_links'], contains('self'));
++
++    final alteracao = await enviar(
++      'PATCH',
++      '/api/v1/terrarios/1',
++      corpo: {'umidadeAlvo': 70, 'observacoes': null},
++    );
++    expect(alteracao.status, 200);
++    final atualizado = jsonDecode(alteracao.body) as Map<String, dynamic>;
++    expect(atualizado['apelido'], 'Terrario de teste');
++    expect(atualizado['umidadeAlvo'], 70);
++    expect(atualizado['observacoes'], isNull);
++    expect(atualizado['_links'], contains('self'));
++
++    final consulta = await enviar('GET', '/api/v1/terrarios/1');
++    expect(consulta.status, 200);
++    expect(jsonDecode(consulta.body), atualizado);
++
++    final remocao = await enviar('DELETE', '/api/v1/terrarios/1');
++    expect(remocao.status, 204);
++    expect(remocao.body, isEmpty);
++    expect((await enviar('GET', '/api/v1/terrarios/1')).status, 404);
++  });
++
++  test('valida observacoes e recusa apelido duplicado', () async {
++    final invalido = dados()..['observacoes'] = 'a' * 501;
++    final falha = await enviar('POST', '/api/v1/terrarios', corpo: invalido);
++    expect(falha.status, 422);
++    expect(falha.headers.contentType!.mimeType, 'application/problem+json');
++    expect((jsonDecode(falha.body) as Map)['errors'], contains('observacoes'));
++    expect(
++      (await enviar('POST', '/api/v1/terrarios', corpo: dados())).status,
++      201,
++    );
++    expect(
++      (await enviar('POST', '/api/v1/terrarios', corpo: dados())).status,
++      409,
++    );
++  });
++
++  test(
++    'ordena a colecao, preserva filtros nos links e recusa SQL na ordenacao',
++    () async {
++      await enviar('POST', '/api/v1/terrarios', corpo: dados(apelido: 'Alfa'));
++      await enviar('POST', '/api/v1/terrarios', corpo: dados(apelido: 'Zeta'));
++      final resposta = await enviar(
++        'GET',
++        '/api/v1/terrarios?ordenarPor=apelido:desc&tamanhoPagina=1',
++      );
++      expect(resposta.status, 200);
++      final pagina = jsonDecode(resposta.body) as Map<String, dynamic>;
++      expect((pagina['itens'] as List).first['apelido'], 'Zeta');
++      final links = pagina['_links'] as Map;
++      final href = (links['next'] as Map)['href'] as String;
++      expect(Uri.parse(href).queryParameters['ordenarPor'], 'apelido:desc');
++      expect(
++        (await enviar('GET', '/api/v1/terrarios?ordenarPor=DROP')).status,
++        422,
++      );
++    },
++  );
++
++  test('expoe a entrada da API, especies e documentacao', () async {
++    final entrada = await enviar('GET', '/api/v1');
++    expect(entrada.status, 200);
++    expect((jsonDecode(entrada.body) as Map).keys, ['_links']);
++    expect(
++      (jsonDecode(entrada.body) as Map)['_links'],
++      containsPair('terrarios', {'href': '/api/v1/terrarios', 'method': 'GET'}),
++    );
++    final criado = await enviar('POST', '/api/v1/terrarios', corpo: dados());
++    expect((jsonDecode(criado.body) as Map)['_links'], contains('especies'));
++    final especies = await enviar('GET', '/api/v1/terrarios/1/especies');
++    expect(especies.status, 200);
++    expect((jsonDecode(especies.body) as Map)['itens'], isEmpty);
++    expect((await enviar('GET', '/api/v1/terrarios/999/especies')).status, 404);
++    final docs = await enviar('GET', '/docs/');
++    expect(docs.status, 200);
++    expect(docs.body, contains("url: '/docs/openapi.yaml'"));
++    expect((await enviar('GET', '/docs/openapi.yaml')).status, 200);
++    expect((await enviar('GET', '/health/live')).status, 200);
++  });
++
++  test('propaga X-Request-Id e gera um identificador quando ausente', () async {
++    final resposta = await enviar('GET', '/api/v1', requestId: 'aula-252');
++    expect(resposta.headers.value('x-request-id'), 'aula-252');
++    final outra = await enviar('GET', '/api/v1');
++    expect(
++      outra.headers.value('x-request-id'),
++      matches(RegExp(r'^[a-f0-9]{32}$')),
++    );
++  });
++
++  test('rejeita a requisicao 61 com 429 e Retry-After', () async {
++    for (var i = 0; i < 60; i++) {
++      expect((await enviar('GET', '/api/v1')).status, 200);
++    }
++    final bloqueio = await enviar('GET', '/api/v1');
++    expect(bloqueio.status, 429);
++    expect(
++      int.parse(bloqueio.headers.value('retry-after')!),
++      inInclusiveRange(1, 60),
++    );
++    expect(bloqueio.headers.contentType!.mimeType, 'application/problem+json');
++  });
++}
+diff --git a/ap004_dart_backend/terrario_api/test/mysql_unicidade_test.dart b/ap004_dart_backend/terrario_api/test/mysql_unicidade_test.dart
+new file mode 100644
+--- /dev/null
++++ b/ap004_dart_backend/terrario_api/test/mysql_unicidade_test.dart
+@@ -0,0 +1,75 @@
++import 'dart:convert';
++
++import 'package:mysql_dart/exception.dart';
++import 'package:mysql_dart/mysql_dart.dart';
++import 'package:shelf/shelf.dart';
++import 'package:terrario_api/src/core/erros.dart';
++import 'package:terrario_api/src/models/terrario.dart';
++import 'package:terrario_api/src/repositories/mysql_terrario_repository.dart';
++import 'package:terrario_api/src/web/middlewares.dart';
++import 'package:test/test.dart';
++
++/// Simula somente a fronteira com o driver; nenhuma consulta real é executada.
++class PoolComFalha extends MySQLConnectionPool {
++  PoolComFalha(this.codigo)
++    : super(
++        host: '127.0.0.1',
++        port: 3307,
++        userName: 'teste',
++        password: 'teste',
++        maxConnections: 1,
++      );
++
++  final int codigo;
++
++  @override
++  Future<IResultSet> execute(
++    String query, [
++    Map<String, dynamic>? params,
++    bool iterable = false,
++  ]) async => throw MySQLServerException('Falha simulada do banco', codigo);
++}
++
++void main() {
++  final terrario = Terrario(
++    apelido: 'Nome disputado',
++    bioma: Bioma.musgo,
++    umidadeAlvo: 80,
++    volumeLitros: 5,
++    dataMontagem: DateTime.utc(2020),
++  );
++
++  test('traduz 1062 no INSERT em Conflito e resposta HTTP 409', () async {
++    final repository = MySqlTerrarioRepository(PoolComFalha(1062));
++    final handler = const Pipeline()
++        .addMiddleware(tratarErros(detalharFalhas: false))
++        .addHandler((Request _) async {
++          await repository.inserir(terrario);
++          return Response(201);
++        });
++    final resposta = await handler(
++      Request('POST', Uri.parse('http://localhost/')),
++    );
++    expect(resposta.statusCode, 409);
++    expect(
++      resposta.headers['content-type'],
++      startsWith('application/problem+json'),
++    );
++    final corpo = jsonDecode(await resposta.readAsString()) as Map;
++    expect(corpo['status'], 409);
++    expect(corpo['detail'], isNot(contains('Falha simulada')));
++  });
++
++  test('traduz 1062 no UPDATE e preserva outros erros do banco', () async {
++    final repository = MySqlTerrarioRepository(PoolComFalha(1062));
++    await expectLater(
++      repository.atualizar(1, terrario),
++      throwsA(isA<Conflito>()),
++    );
++    final outro = MySqlTerrarioRepository(PoolComFalha(1146));
++    await expectLater(
++      outro.inserir(terrario),
++      throwsA(isA<MySQLServerException>()),
++    );
++  });
++}
+diff --git a/ap004_dart_backend/terrario_api/test/terrario_service_test.dart b/ap004_dart_backend/terrario_api/test/terrario_service_test.dart
+--- a/ap004_dart_backend/terrario_api/test/terrario_service_test.dart
++++ b/ap004_dart_backend/terrario_api/test/terrario_service_test.dart
+@@ -1,5 +1,6 @@
+ import 'package:terrario_api/src/core/erros.dart';
+ import 'package:terrario_api/src/models/terrario.dart';
++import 'package:terrario_api/src/models/especie.dart';
+ import 'package:terrario_api/src/repositories/terrario_repository.dart';
+ import 'package:terrario_api/src/services/terrario_service.dart';
+ import 'package:test/test.dart';
+@@ -32,12 +33,34 @@
+   }
+ 
+   @override
+-  Future<Pagina<Terrario>> listar(FiltroTerrario f) async => Pagina(
+-    itens: _dados.values.toList(),
+-    total: _dados.length,
+-    pagina: f.pagina,
+-    tamanhoPagina: f.tamanhoPagina,
+-  );
++  Future<Pagina<Terrario>> listar(FiltroTerrario f) async {
++    f.ordemSql;
++    final itens = _dados.values
++        .where(
++          (t) =>
++              (f.bioma == null || t.bioma == f.bioma) &&
++              (f.umidadeMinima == null || t.umidadeAlvo >= f.umidadeMinima!),
++        )
++        .toList();
++    final partes = f.ordenarPor.split(':');
++    itens.sort((a, b) {
++      final ordem = switch (partes.first) {
++        'umidadeAlvo' => a.umidadeAlvo.compareTo(b.umidadeAlvo),
++        'dataMontagem' => a.dataMontagem.compareTo(b.dataMontagem),
++        _ => a.apelido.compareTo(b.apelido),
++      };
++      return partes.length == 2 && partes[1] == 'desc' ? -ordem : ordem;
++    });
++    return Pagina(
++      itens: itens.skip(f.deslocamento).take(f.tamanhoPagina).toList(),
++      total: itens.length,
++      pagina: f.pagina,
++      tamanhoPagina: f.tamanhoPagina,
++    );
++  }
++
++  @override
++  Future<List<Especie>> listarEspecies(int terrarioId) async => [];
+ 
+   @override
+   Future<Terrario?> atualizar(int id, Terrario t) async =>

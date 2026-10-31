@@ -1,0 +1,99 @@
+# Nome do projeto: prefixa contêineres, rede e volume criados por este arquivo.
+name: terrario
+
+# Cada entrada abaixo é um contêiner que o Compose vai gerenciar.
+services:
+
+  # ---------------- Banco de dados ----------------
+  db:
+    # Imagem oficial baixada do Docker Hub. 8.4 é a versão de suporte estendido.
+    image: mysql:8.4
+    # Nome fixo do contêiner, para facilitar comandos como "docker logs".
+    container_name: terrario-db
+    # Reinicia sozinho se cair, mas não se você mandar parar explicitamente.
+    restart: unless-stopped
+    # Variáveis lidas pelo entrypoint da imagem na primeira inicialização.
+    environment:
+      # Senha do administrador do banco.
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      # Cria este banco automaticamente.
+      MYSQL_DATABASE: ${DB_NAME}
+      # Cria este usuário com todos os privilégios sobre o banco acima.
+      MYSQL_USER: ${DB_USER}
+      # Senha do usuário criado.
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    ports:
+      # host:contêiner. Dentro da rede o MySQL escuta na 3306; publicamos
+      # na 3307 para não colidir com um MySQL instalado na máquina.
+      # Em produção esta seção inteira deve ser removida.
+      - "3307:3306"
+    volumes:
+      # Volume nomeado: os dados sobrevivem à remoção do contêiner.
+      - dados-mysql:/var/lib/mysql
+      # Scripts executados apenas na primeira subida; :ro é somente leitura.
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # Porta aberta não significa banco pronto: este comando pergunta ao
+      # servidor se ele já aceita consultas.
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1",
+             "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      # De quanto em quanto tempo repetir a verificação.
+      interval: 5s
+      # Quanto esperar por cada tentativa antes de considerá-la falha.
+      timeout: 5s
+      # Quantas falhas seguidas até marcar o contêiner como doente.
+      retries: 20
+      # Período inicial de carência: falhas aqui não contam para o limite.
+      start_period: 40s
+    networks:
+      # Liga este contêiner à rede privada declarada no fim do arquivo.
+      - terrario-net
+
+  # ---------------- API ----------------
+  # Filho de "services", no mesmo nível de "db".
+  api:
+    build:
+      # Diretório enviado ao Docker como contexto de build.
+      context: .
+      # Arquivo de receita da imagem.
+      dockerfile: Dockerfile
+    # Nome e tag da imagem gerada.
+    image: terrario-api:1.0.0
+    container_name: terrario-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        # Espera o healthcheck do banco passar, não apenas o contêiner iniciar.
+        condition: service_healthy
+    environment:
+      # Desliga mensagens internas de erro nas respostas.
+      APP_ENV: production
+      # Porta em que o servidor Dart escuta dentro do contêiner.
+      SERVER_PORT: 8080
+      LOG_LEVEL: ${LOG_LEVEL}
+      # Nome do serviço vira nome de host na rede do Compose. Escrever
+      # 127.0.0.1 aqui apontaria para o próprio contêiner da API.
+      DB_HOST: db
+      DB_PORT: 3306
+      # As três linhas abaixo precisam bater com as do serviço db.
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_POOL_SIZE: ${DB_POOL_SIZE}
+    ports:
+      # Porta da máquina à esquerda, porta do contêiner à direita.
+      - "${SERVER_PORT}:8080"
+    networks:
+      - terrario-net
+
+# Chave de primeiro nível, irmã de "services": volumes nomeados usados
+# acima. Só são removidos com "down -v".
+volumes:
+  dados-mysql:
+
+# Também de primeiro nível. Rede privada: os contêineres se enxergam pelo
+# nome do serviço, e nada aqui dentro fica exposto para fora sem uma
+# publicação explícita de porta.
+networks:
+  terrario-net:
+    driver: bridge

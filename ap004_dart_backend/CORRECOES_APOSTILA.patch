@@ -1,0 +1,158 @@
+diff --git a/ap004_dart_backend/terrario_api/lib/src/controllers/terrario_controller.dart b/ap004_dart_backend/terrario_api/lib/src/controllers/terrario_controller.dart
+--- a/ap004_dart_backend/terrario_api/lib/src/controllers/terrario_controller.dart
++++ b/ap004_dart_backend/terrario_api/lib/src/controllers/terrario_controller.dart
+@@ -39,28 +39,30 @@
+     return id;
+   }
+ 
+-/// Lê e decodifica o corpo da requisição.
+-Future<Map<String, dynamic>> _lerJson(Request requisicao) async {
+-  final tipo = requisicao.headers['content-type'] ?? '';
+-  if (!tipo.contains('application/json')) {
+-    throw RequisicaoInvalida('Envie o corpo com Content-Type application/json.');
++  /// Lê e decodifica o corpo da requisição.
++  Future<Map<String, dynamic>> _lerJson(Request requisicao) async {
++    final tipo = requisicao.headers['content-type'] ?? '';
++    if (!tipo.contains('application/json')) {
++      throw RequisicaoInvalida(
++        'Envie o corpo com Content-Type application/json.',
++      );
++    }
++
++    final texto = await requisicao.readAsString();
++    if (texto.trim().isEmpty) {
++      throw RequisicaoInvalida('O corpo da requisicao esta vazio.');
++    }
++
++    try {
++      final decodificado = jsonDecode(texto);
++      if (decodificado is! Map<String, dynamic>) {
++        throw RequisicaoInvalida('O corpo deve ser um objeto JSON.');
++      }
++      return decodificado;
++    } on FormatException {
++      throw RequisicaoInvalida('O corpo nao e um JSON valido.');
++    }
+   }
+-
+-  final texto = await requisicao.readAsString();
+-  if (texto.trim().isEmpty) {
+-    throw RequisicaoInvalida('O corpo da requisicao esta vazio.');
+-  }
+-
+-  try {
+-    final decodificado = jsonDecode(texto);
+-    if (decodificado is! Map<String, dynamic>) {
+-      throw RequisicaoInvalida('O corpo deve ser um objeto JSON.');
+-    }
+-    return decodificado;
+-  } on FormatException {
+-    throw RequisicaoInvalida('O corpo nao e um JSON valido.');
+-  }
+-}
+ 
+   /// Converte o mapa recebido em uma entidade, acumulando problemas de
+   /// tipo e de campos ausentes. Regras de faixa e de tamanho continuam
+@@ -69,7 +71,9 @@
+     final erros = <String, String>{};
+ 
+     final apelido = corpo['apelido'];
+-    if (apelido is! String) erros['apelido'] = 'Campo obrigatorio do tipo texto.';
++    if (apelido is! String) {
++      erros['apelido'] = 'Campo obrigatorio do tipo texto.';
++    }
+ 
+     final biomaBruto = corpo['bioma'];
+     final bioma = biomaBruto is String ? Bioma.porNome(biomaBruto) : null;
+@@ -79,10 +83,14 @@
+     }
+ 
+     final umidade = corpo['umidadeAlvo'];
+-    if (umidade is! int) erros['umidadeAlvo'] = 'Campo obrigatorio do tipo inteiro.';
++    if (umidade is! int) {
++      erros['umidadeAlvo'] = 'Campo obrigatorio do tipo inteiro.';
++    }
+ 
+     final volume = corpo['volumeLitros'];
+-    if (volume is! num) erros['volumeLitros'] = 'Campo obrigatorio do tipo numerico.';
++    if (volume is! num) {
++      erros['volumeLitros'] = 'Campo obrigatorio do tipo numerico.';
++    }
+ 
+     final dataBruta = corpo['dataMontagem'];
+     DateTime? data;
+@@ -102,28 +110,28 @@
+     );
+   }
+ 
+-/// Cada controlador expõe seu próprio roteador, que depois é montado
+-/// sob um prefixo pelo roteador principal.
+-Router get router {
+-  final router = Router();
++  /// Cada controlador expõe seu próprio roteador, que depois é montado
++  /// sob um prefixo pelo roteador principal.
++  Router get router {
++    final router = Router();
+ 
+-  router.get('/', _listar);
+-  router.get('/<id>', _buscar);
+-  router.post('/', _criar);
+-  router.put('/<id>', _atualizar);
+-  router.delete('/<id>', _remover);
++    router.get('/', _listar);
++    router.get('/<id>', _buscar);
++    router.post('/', _criar);
++    router.put('/<id>', _atualizar);
++    router.delete('/<id>', _remover);
+ 
+-  return router;
+-}
++    return router;
++  }
+ 
+   Future<Response> _listar(Request requisicao) async {
+     final q = requisicao.url.queryParameters;
+     final filtro = FiltroTerrario(
+-    bioma: Bioma.porNome(q['bioma']),
+-    umidadeMinima: int.tryParse(q['umidadeMinima'] ?? ''),
+-    pagina: int.tryParse(q['pagina'] ?? '') ?? 1,
+-    tamanhoPagina: int.tryParse(q['tamanhoPagina'] ?? '') ?? 20,
+-  );
++      bioma: Bioma.porNome(q['bioma']),
++      umidadeMinima: int.tryParse(q['umidadeMinima'] ?? ''),
++      pagina: int.tryParse(q['pagina'] ?? '') ?? 1,
++      tamanhoPagina: int.tryParse(q['tamanhoPagina'] ?? '') ?? 20,
++    );
+     final pagina = await _service.listar(filtro);
+ 
+     // Preserva os filtros ativos nos links de paginação, para que
+@@ -166,8 +174,10 @@
+ 
+   Future<Response> _atualizar(Request requisicao, String id) async {
+     final corpo = await _lerJson(requisicao);
+-    final atualizado =
+-        await _service.atualizar(_idValido(id), _montarTerrario(corpo));
++    final atualizado = await _service.atualizar(
++      _idValido(id),
++      _montarTerrario(corpo),
++    );
+     return _json(200, atualizado.toJson());
+   }
+ 
+@@ -178,4 +188,3 @@
+     return Response(204);
+   }
+ }
+-}
+diff --git a/ap004_dart_backend/terrario_api/lib/src/repositories/mysql_terrario_repository.dart b/ap004_dart_backend/terrario_api/lib/src/repositories/mysql_terrario_repository.dart
+--- a/ap004_dart_backend/terrario_api/lib/src/repositories/mysql_terrario_repository.dart
++++ b/ap004_dart_backend/terrario_api/lib/src/repositories/mysql_terrario_repository.dart
+@@ -128,7 +128,7 @@
+ 
+   @override
+   Future<Terrario?> atualizar(int id, Terrario terrario) async {
+-    final resultado = await _pool.execute(
++    await _pool.execute(
+       'UPDATE terrarios SET '
+       'apelido = :apelido, bioma = :bioma, umidade_alvo = :umidade, '
+       'volume_litros = :volume, data_montagem = :data '

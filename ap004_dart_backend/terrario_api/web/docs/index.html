@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>API de Terrários</title>
+  <!-- Folha de estilo oficial do Swagger UI, servida por CDN. -->
+  <link rel="stylesheet"
+        href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+</head>
+<body>
+  <!-- O Swagger UI desenha a documentação dentro desta div. -->
+  <div id="swagger"></div>
+
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    SwaggerUIBundle({
+      // Caminho absoluto: funciona tanto em /docs quanto em /docs/.
+      url: '/docs/openapi.yaml',
+      dom_id: '#swagger',
+      docExpansion: 'list'
+    });
+  </script>
+</body>
+</html>

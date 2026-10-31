@@ -198,5 +198,71 @@ com a porta local 3307 publicada, conforme a orientação da apostila.
 `dart format .` terminou sem alterações e `dart analyze` retornou
 `No issues found!` antes do commit.
 
-Execução concluída até o item 8.4, na página 32 da apostila. O capítulo 9
-não foi iniciado.
+Esse era o ponto de parada ao registrar o capítulo 8. O capítulo 9 foi
+concluído posteriormente, e a continuação está registrada abaixo.
+
+## 9. A camada de persistência
+
+Implementação já existente: pool de conexões, espera pelo banco, contrato
+do repositório, filtros, paginação e CRUD em MySQL. O antigo `bin/server.dart`
+correspondia à conferência provisória do código 9.8.
+
+## 10. A camada de serviço
+
+Criado `lib/src/services/terrario_service.dart` com os códigos 10.1 e 10.2,
+incluindo o limite de 100 itens por página da apostila. Os códigos 10.3 e 10.4
+foram transcritos para `test/terrario_service_test.dart`; os dois testes passaram.
+
+Executada a experiência do item 10.1.1: alterar temporariamente o limite de
+umidade para 1000 fez o teste de validação falhar. O limite de 100 foi restaurado.
+
+## 11. A camada web
+
+Transcritos os códigos 11.3 a 11.13: respostas problem+json, log, CORS,
+tratamento de erros, controlador de terrários, verificações de saúde,
+montagem da API e servidor com tratamento de sinais.
+
+O código 11.10 contém uma chave excedente no PDF. Ela foi mantida na
+transcrição principal, conforme o pedido de registrar erros para corrigir
+ao final. Isso impede a análise e a compilação da API até a correção.
+
+## 12. HATEOAS
+
+Criado `lib/src/web/links.dart` e aplicados os acréscimos do código 12.2
+ao controlador. A listagem, a consulta e a criação devolvem os links
+indicados pelo material, preservando filtros nos links de paginação.
+
+## 13. OpenAPI e Swagger
+
+Criados `openapi.yaml`, `web/docs/index.html` e o controlador de documentação.
+As rotas `/docs/` e `/docs/openapi.yaml` foram montadas na API.
+O contrato principal documenta somente a listagem, como nos códigos 13.1 e 13.2.
+
+## 14. Imagem Docker
+
+Criados o `Dockerfile` com dois estágios e o `.dockerignore`, conforme os
+códigos 14.1 e 14.2. A execução da imagem depende da correção de compilação
+do capítulo 11 e de um Docker Engine disponível.
+
+## 15. Docker Compose
+
+Criados `compose.yaml` e `scripts/up.sh`, conforme os códigos 15.1 a 15.3.
+A configuração do Compose e a sintaxe Bash foram verificadas. O script deve
+ser executado pelo Git Bash ou WSL no Windows, como orientado na apostila.
+
+## 16. Boas práticas e testes
+
+Acrescentados os dois testes do código 16.1. `dart test` passou com os quatro
+casos da apostila e o teste inicial `calculate`, totalizando cinco testes.
+Esse resultado não comprova a compilação da camada web: os testes originais
+não importam o controlador que contém a chave excedente.
+
+## 17. Exercícios
+
+Os dez exercícios foram resolvidos em um patch separado, preservando a
+transcrição dos capítulos anteriores. Consulte [exercicios/README.md](exercicios/README.md)
+para a correspondência entre cada exercício, sua implementação e os comandos
+de aplicação. A versão com os exercícios foi verificada em uma cópia isolada.
+
+O [relatório de implementação](RELATORIO_IMPLEMENTACAO.md) reúne o estado por
+capítulo, os erros reproduzidos, as correções propostas e os limites da verificação.

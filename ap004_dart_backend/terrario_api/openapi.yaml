@@ -1,0 +1,87 @@
+openapi: 3.1.0
+
+info:
+  title: API de Terrários
+  description: Catálogo de terrários com filtros, paginação e hipermídia.
+  version: 1.0.0
+
+servers:
+  - url: /api/v1
+    description: Servidor atual
+
+# Blocos reutilizáveis. Definir uma vez aqui e referenciar com $ref evita
+# repetir a mesma estrutura em cada operação — e garante que corrigir um
+# campo corrija todos os lugares onde ele aparece.
+components:
+  schemas:
+    Bioma:
+      type: string
+      enum: [tropical, desertico, temperado, musgo]
+
+    Link:
+      type: object
+      properties:
+        href: { type: string, example: /api/v1/terrarios/7 }
+        method: { type: string, example: GET }
+
+    Terrario:
+      type: object
+      properties:
+        id: { type: integer, example: 7 }
+        apelido: { type: string, example: Vale das Samambaias }
+        bioma:
+          $ref: '#/components/schemas/Bioma'
+        umidadeAlvo: { type: integer, minimum: 0, maximum: 100, example: 85 }
+        volumeLitros: { type: number, format: double, example: 12.5 }
+        dataMontagem: { type: string, format: date, example: '2026-03-14' }
+        _links:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/Link'
+
+    PaginaDeTerrarios:
+      type: object
+      properties:
+        itens:
+          type: array
+          items:
+            $ref: '#/components/schemas/Terrario'
+        pagina: { type: integer, example: 1 }
+        tamanhoPagina: { type: integer, example: 20 }
+        total: { type: integer, example: 4 }
+        totalPaginas: { type: integer, example: 1 }
+        _links:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/Link'
+
+# Chave de primeiro nível, no mesmo recuo de "openapi", "info" e "components".
+paths:
+  # Filho de paths: o caminho, relativo ao "url" declarado em servers.
+  /terrarios:
+    # Filho do caminho: o verbo HTTP.
+    get:
+      summary: Lista terrários com filtros e paginação
+      # Cada parâmetro de consulta vira uma caixa preenchível na interface
+      # do Swagger, com os limites aplicados na própria tela.
+      parameters:
+        - name: bioma
+          in: query
+          schema:
+            $ref: '#/components/schemas/Bioma'
+        - name: umidadeMinima
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 100 }
+        - name: pagina
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: tamanhoPagina
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: Página de resultados
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginaDeTerrarios'
