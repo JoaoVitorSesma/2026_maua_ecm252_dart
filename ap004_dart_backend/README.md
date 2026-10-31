@@ -249,3 +249,10 @@ do capítulo 11 e de um Docker Engine disponível.
 Criados `compose.yaml` e `scripts/up.sh`, conforme os códigos 15.1 a 15.3.
 A configuração do Compose e a sintaxe Bash foram verificadas. O script deve
 ser executado pelo Git Bash ou WSL no Windows, como orientado na apostila.
+
+## 16. Boas práticas e testes
+
+Acrescentados os dois testes do código 16.1. `dart test` passou com os quatro
+casos da apostila e o teste inicial `calculate`, totalizando cinco testes.
+Esse resultado não comprova a compilação da camada web: os testes originais
+não importam o controlador que contém a chave excedente.

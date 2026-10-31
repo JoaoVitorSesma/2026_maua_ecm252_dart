@@ -73,4 +73,15 @@ void main() {
     final invalido = valido().copyWith(umidadeAlvo: 130);
     expect(() => service.criar(invalido), throwsA(isA<ErroValidacao>()));
   });
+
+  test('recusa apelido duplicado', () async {
+    // O primeiro criar passa; o segundo esbarra na verificação de
+    // unicidade, que só tem efeito porque o repositório já tem estado.
+    await service.criar(valido());
+    expect(() => service.criar(valido()), throwsA(isA<Conflito>()));
+  });
+
+  test('buscar identificador inexistente lanca NaoEncontrado', () {
+    expect(() => service.buscarPorId(999), throwsA(isA<NaoEncontrado>()));
+  });
 }
