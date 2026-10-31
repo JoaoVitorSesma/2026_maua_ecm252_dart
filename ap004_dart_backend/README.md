@@ -231,3 +231,9 @@ ao final. Isso impede a análise e a compilação da API até a correção.
 Criado `lib/src/web/links.dart` e aplicados os acréscimos do código 12.2
 ao controlador. A listagem, a consulta e a criação devolvem os links
 indicados pelo material, preservando filtros nos links de paginação.
+
+## 13. OpenAPI e Swagger
+
+Criados `openapi.yaml`, `web/docs/index.html` e o controlador de documentação.
+As rotas `/docs/` e `/docs/openapi.yaml` foram montadas na API.
+O contrato principal documenta somente a listagem, como nos códigos 13.1 e 13.2.

@@ -4,6 +4,7 @@ import 'package:shelf_router/shelf_router.dart';
 
 import 'config/app_config.dart';
 import 'controllers/health_controller.dart';
+import 'controllers/docs_controller.dart';
 import 'controllers/terrario_controller.dart';
 import 'repositories/mysql_terrario_repository.dart';
 import 'services/terrario_service.dart';
@@ -20,10 +21,13 @@ Handler construirApi(AppConfig config, MySQLConnectionPool pool) {
   final terrarios = TerrarioController(service);
   final health = HealthController(pool);
 
+  final docs = DocsController();
+
   final raiz = Router();
 
   raiz.mount('/api/v1/terrarios', terrarios.router.call);
   raiz.mount('/health', health.router.call);
+  raiz.mount('/docs', docs.router.call);
 
   // Rota curinga: captura tudo o que não casou com as rotas acima.
   // A sintaxe <nome|expressão> do shelf_router declara um parâmetro
